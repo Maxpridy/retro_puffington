@@ -68,7 +68,7 @@ class NNValueFunction(object):
         self.sess = tf.Session(graph=self.g)
         self.sess.run(self.init)
 
-    def fit(self, x, y, logger):
+    def fit(self, x, y):
         """ Fit model to current data batch + previous data batch
 
         Args:
@@ -99,9 +99,6 @@ class NNValueFunction(object):
         loss = np.mean(np.square(y_hat - y))         # explained variance after update
         exp_var = 1 - np.var(y - y_hat) / np.var(y)  # diagnose over-fitting of val func
 
-        logger.log({'ValFuncLoss': loss,
-                    'ExplainedVarNew': exp_var,
-                    'ExplainedVarOld': old_exp_var})
 
     def predict(self, x):
         """ Predict method """

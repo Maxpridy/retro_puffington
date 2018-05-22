@@ -40,7 +40,9 @@ class SonicDiscretizer(gym.ActionWrapper):
         self.action_space = gym.spaces.Discrete(len(self._actions))
 
     def action(self, a): # pylint: disable=W0221
-        return self._actions[a].copy()
+        a_list = a.tolist()
+        a_index = a_list.index(max(a_list))
+        return self._actions[a_index].copy()
 
 class RewardScaler(gym.RewardWrapper):
     """

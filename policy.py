@@ -170,7 +170,13 @@ class Policy(object):
 
         return self.sess.run(self.sampled_act, feed_dict=feed_dict)
 
-    def update(self, observes, actions, advantages, logger):
+    def test_sample(self, obs):
+        """Draw sample from policy distribution"""
+        feed_dict = {self.obs_ph: obs}
+
+        return self.sess.run(self.means, feed_dict=feed_dict)
+
+    def update(self, observes, actions, advantages):
         """ Update policy based on observations, actions and advantages
 
         Args:
@@ -206,11 +212,6 @@ class Policy(object):
             if self.beta < (1 / 30) and self.lr_multiplier < 10:
                 self.lr_multiplier *= 1.5
 
-        logger.log({'PolicyLoss': loss,
-                    'PolicyEntropy': entropy,
-                    'KL': kl,
-                    'Beta': self.beta,
-                    '_lr_multiplier': self.lr_multiplier})
 
     def close_sess(self):
         """ Close TensorFlow session """

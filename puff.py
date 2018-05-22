@@ -39,7 +39,9 @@ import os
 import argparse
 import signal
 
+from retro_contest.local import make
 from baselines.common.atari_wrappers import WarpFrame, FrameStack
+from sonic_util import AllowBacktracking, make_env, SonicDiscretizer
 
 
 class GracefulKiller:
@@ -67,11 +69,14 @@ def init_gym():
         number of action dimensions (int)
     """
     #env = gym.make(env_name)
-    env = grc.RemoteEnv('tmp/sock')
+    #env = grc.RemoteEnv('tmp/sock')
+    env = make(game='SonicAndKnuckles3-Genesis', state='AngelIslandZone.Act1')
+    env = SonicDiscretizer(env)
     env = WarpFrame(env)
     #obs_dim = env.observation_space.shape[0]
     obs_dim = 0
-    act_dim = env.action_space.shape[0]
+    #act_dim = env.action_space.shape[0]
+    act_dim = env.action_space.n
 
     return env, obs_dim, act_dim
 
@@ -100,14 +105,16 @@ def run_episode(env, policy, scaler, animate=False):
     scale[-1] = 1.0  # don't scale time step feature
     offset[-1] = 0.0  # don't offset time step feature
     while not done:
-        if animate:
-            env.render()
+        env.render()
         obs = obs.astype(np.float32).reshape((1, -1))
         obs = np.append(obs, [[step]], axis=1)  # add time step feature
         unscaled_obs.append(obs)
         obs = (obs - offset) * scale  # center and scale observations
         observes.append(obs)
         action = policy.sample(obs).reshape((1, -1)).astype(np.float32)
+        print("action :", action)
+        means = policy.test_sample(obs)
+        print("means :", means)
         actions.append(action)
         obs, reward, done, _ = env.step(np.squeeze(action, axis=0))
         if not isinstance(reward, float):
@@ -119,7 +126,7 @@ def run_episode(env, policy, scaler, animate=False):
             np.array(rewards, dtype=np.float64), np.concatenate(unscaled_obs))
 
 
-def run_policy(env, policy, scaler, logger, episodes):
+def run_policy(env, policy, scaler, episodes):
     """ Run policy and collect data for a minimum of min_steps and min_episodes
 
     Args:
@@ -148,8 +155,7 @@ def run_policy(env, policy, scaler, logger, episodes):
         trajectories.append(trajectory)
     unscaled = np.concatenate([t['unscaled_obs'] for t in trajectories])
     scaler.update(unscaled)  # update running statistics for scaling observations
-    logger.log({'_MeanReward': np.mean([t['rewards'].sum() for t in trajectories]),
-                'Steps': total_steps})
+
 
     return trajectories
 
@@ -245,27 +251,6 @@ def build_train_set(trajectories):
     return observes, actions, advantages, disc_sum_rew
 
 
-def log_batch_stats(observes, actions, advantages, disc_sum_rew, logger, episode):
-    """ Log various batch statistics """
-    logger.log({'_mean_obs': np.mean(observes),
-                '_min_obs': np.min(observes),
-                '_max_obs': np.max(observes),
-                '_std_obs': np.mean(np.var(observes, axis=0)),
-                '_mean_act': np.mean(actions),
-                '_min_act': np.min(actions),
-                '_max_act': np.max(actions),
-                '_std_act': np.mean(np.var(actions, axis=0)),
-                '_mean_adv': np.mean(advantages),
-                '_min_adv': np.min(advantages),
-                '_max_adv': np.max(advantages),
-                '_std_adv': np.var(advantages),
-                '_mean_discrew': np.mean(disc_sum_rew),
-                '_min_discrew': np.min(disc_sum_rew),
-                '_max_discrew': np.max(disc_sum_rew),
-                '_std_discrew': np.var(disc_sum_rew),
-                '_Episode': episode
-                })
-
 
 def main(num_episodes, gamma, lam, kl_targ, batch_size, hid1_mult, policy_logvar):
     """ Main training loop
@@ -287,17 +272,16 @@ def main(num_episodes, gamma, lam, kl_targ, batch_size, hid1_mult, policy_logvar
     #obs_dim = 215041
     obs_dim = 7057
     now = datetime.utcnow().strftime("%b-%d_%H:%M:%S")  # create unique directories
-    logger = Logger(logname=env_name, now=now)
     #aigym_path = os.path.join('/tmp', env_name, now)
     #env = wrappers.Monitor(env, aigym_path, force=True)
     scaler = Scaler(obs_dim)
     val_func = NNValueFunction(obs_dim, hid1_mult)
     policy = Policy(obs_dim, act_dim, kl_targ, hid1_mult, policy_logvar)
     # run a few episodes of untrained policy to initialize scaler:
-    run_policy(env, policy, scaler, logger, episodes=5)
+    run_policy(env, policy, scaler, episodes=5)
     episode = 0
     while episode < num_episodes:
-        trajectories = run_policy(env, policy, scaler, logger, episodes=batch_size)
+        trajectories = run_policy(env, policy, scaler, episodes=batch_size)
         episode += len(trajectories)
         add_value(trajectories, val_func)  # add estimated values to episodes
         add_disc_sum_rew(trajectories, gamma)  # calculated discounted sum of Rs
@@ -305,15 +289,13 @@ def main(num_episodes, gamma, lam, kl_targ, batch_size, hid1_mult, policy_logvar
         # concatenate all episodes into single NumPy arrays
         observes, actions, advantages, disc_sum_rew = build_train_set(trajectories)
         # add various stats to training log:
-        log_batch_stats(observes, actions, advantages, disc_sum_rew, logger, episode)
-        policy.update(observes, actions, advantages, logger)  # update policy
-        val_func.fit(observes, disc_sum_rew, logger)  # update value function
-        logger.write(display=True)  # write logger results to file and stdout
+        log_batch_stats(observes, actions, advantages, disc_sum_rew, episode)
+        policy.update(observes, actions, advantages)  # update policy
+        val_func.fit(observes, disc_sum_rew)  # update value function
         if killer.kill_now:
             if input('Terminate training (y/[n])? ') == 'y':
                 break
             killer.kill_now = False
-    logger.close()
     policy.close_sess()
     val_func.close_sess()
 
